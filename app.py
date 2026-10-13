@@ -12,7 +12,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 st.set_page_config(page_title="봉우리 스마트 발주 통합 시스템", layout="wide")
 
-# --- 1. 설정 데이터 로드 및 초기화 ---
+# --- 1. 설정 데이터 로드 및 초기화 (호환성 유지) ---
 DB_FILE = "web_settings.json"
 
 def load_settings():
@@ -82,6 +82,7 @@ def load_product_dict(url):
 # --- 메인 화면 탭 구성 ---
 st.title("🍎 봉우리 스마트 발주 통합 시스템 (Web Ver.)")
 
+# 기존 4개 탭에서 5개 탭으로 확장
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📦 대량 취합 실행", 
     "⚙️ 거래처 양식 관리", 
@@ -197,28 +198,45 @@ with tab2:
                 st.warning("업체명을 입력해주세요.")
 
 # ==========================================
-# 탭 1: 대량 취합 실행 (중복 관리 로직 강화)
+# 탭 1: 대량 취합 실행 (삭제 버튼 기능 추가)
 # ==========================================
 with tab1:
     st.header("📦 엑셀 파일 대량 취합")
     
     uploaded_files = st.file_uploader("취합할 엑셀 파일들을 드래그해서 올려주세요", type=["xlsx", "xls"], accept_multiple_files=True)
     
-    # 세션 변수 초기화
+    # 삭제 세션 상태 초기화
     if 'deleted_files' not in st.session_state:
         st.session_state.deleted_files = set()
-    if 'file_order' not in st.session_state:
-        st.session_state.file_order = []
 
-        # 사용자가 X 버튼으로 삭제 처리한 파일 제외
+    if uploaded_files:
+        st.write("---")
+        comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
+        
+        if 'file_order' not in st.session_state:
+            st.session_state.file_order = []
+        if 'last_uploaded_names' not in st.session_state:
+            st.session_state.last_uploaded_names = set()
+
+        current_names = {f.name for f in uploaded_files}
+        if current_names != st.session_state.last_uploaded_names:
+            st.session_state.file_order = [f for f in st.session_state.file_order if f in current_names]
+            for f in uploaded_files:
+                if f.name not in st.session_state.file_order:
+                    st.session_state.file_order.append(f.name)
+            st.session_state.last_uploaded_names = current_names
+            # 업로드 목록 변경 시 삭제 집합 정돈
+            st.session_state.deleted_files = st.session_state.deleted_files.intersection(current_names)
+            
+        file_dict = {f.name: f for f in uploaded_files}
+        
+        # X 버튼으로 삭제 처리된 파일 제외
         active_file_order = [fn for fn in st.session_state.file_order if fn not in st.session_state.deleted_files and fn in file_dict]
 
         if active_file_order:
-            st.write("---")
-            comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
             file_company_map = {}
             
-            st.write("💡 **위아래 화살표(🔼/🔽)로 순서를 변경하고, 맨 우측 [❌] 버튼으로 해당 파일을 목록에서 제외할 수 있습니다.**")
+            st.write("💡 **위아래 화살표(🔼/🔽)로 순서를 변경하고, 우측 [❌] 버튼으로 해당 파일을 목록에서 지울 수 있습니다.**")
             
             for i, fname in enumerate(active_file_order):
                 col_btn, col_name, col_sel, col_del = st.columns([1, 4, 3, 1])
@@ -244,7 +262,7 @@ with tab1:
                 with col_sel:
                     file_company_map[fname] = st.selectbox(f"{fname} 업체 선택", ["-- 선택 --"] + comp_list, key=f"sel_{fname}", label_visibility="collapsed")
                 with col_del:
-                    if st.button("❌", key=f"del_{fname}", help="이 파일을 리스트에서 삭제"):
+                    if st.button("❌", key=f"del_{fname}", help="이 파일을 리스트에서 지우기"):
                         st.session_state.deleted_files.add(fname)
                         st.rerun()
             
@@ -411,6 +429,7 @@ with tab1:
                 else:
                     st.warning("선택된 파일에서 유효한 데이터를 찾지 못했습니다.")
 
+
 # ==========================================
 # 탭 5: 송장 정돈 및 검수
 # ==========================================
@@ -422,11 +441,13 @@ with tab5:
 
     if uploaded_file is not None:
         try:
+            # 1. 원본 데이터 읽기 (운송장번호와 주문번호는 지수표기법 방지를 위해 문자열로, 상품코드는 숫자로 로드)
             df = pd.read_excel(uploaded_file, dtype={
                 '운송장번호': str, 
                 '주문번호': str
             })
 
+            # 추출할 10개 열 지정 및 순서 정의
             target_cols = [
                 '운송장번호', '수하인명', '수하인기본주소', '송하인명', 
                 'A', '상품명', '상품코드', '주문번호', '쇼핑몰', '연계비용'
@@ -435,12 +456,14 @@ with tab5:
             available_cols = [col for col in target_cols if col in df.columns]
             df_filtered = df[available_cols].copy()
 
+            # 2. 상품코드 숫자형 변환 및 오름차순 정렬
             if '상품코드' in df_filtered.columns:
                 df_filtered['상품코드'] = pd.to_numeric(df_filtered['상품코드'], errors='coerce')
                 df_filtered = df_filtered.sort_values(by='상품코드', ascending=True)
 
             st.success(f"총 {len(df_filtered)}건의 데이터가 성공적으로 정돈되었습니다.")
 
+            # 웹 화면 표시 (연계비용 170 초과 시 화면에서도 노란색 강조)
             def highlight_cost(row):
                 if '연계비용' in row and pd.notnull(row['연계비용']) and float(row['연계비용']) > 170:
                     return ['background-color: #FFFF99'] * len(row)
@@ -448,14 +471,17 @@ with tab5:
 
             st.dataframe(df_filtered.style.apply(highlight_cost, axis=1), use_container_width=True)
 
+            # 3. openpyxl을 활용하여 엑셀 셀 서식 적용 (상품코드는 숫자, 운송장/주문번호는 텍스트)
             output = io.BytesIO()
             wb = Workbook()
             ws = wb.active
             ws.title = "송장정리"
 
+            # 헤더 작성
             headers = list(df_filtered.columns)
             ws.append(headers)
 
+            # 데이터 적재
             for _, r in df_filtered.iterrows():
                 row_values = []
                 for col in headers:
@@ -471,6 +497,7 @@ with tab5:
                         row_values.append(str(val))
                 ws.append(row_values)
 
+            # 열별 셀 서식 지정 (운송장번호/주문번호는 텍스트, 상품코드는 숫자 형식)
             for col_idx, col_name in enumerate(headers, start=1):
                 if col_name in ['운송장번호', '주문번호']:
                     for row in range(2, ws.max_row + 1):
@@ -479,11 +506,13 @@ with tab5:
                     for row in range(2, ws.max_row + 1):
                         ws.cell(row=row, column=col_idx).number_format = '#,##0'
 
+            # 1행에 자동 필터(AutoFilter) 설정
             if ws.max_row >= 1 and ws.max_column >= 1:
                 from openpyxl.utils import get_column_letter
                 max_col_letter = get_column_letter(ws.max_column)
                 ws.auto_filter.ref = f"A1:{max_col_letter}{ws.max_row}"
 
+            # 노란색 서식 지정
             yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
             if '연계비용' in available_cols:
@@ -502,6 +531,7 @@ with tab5:
             wb.save(output)
             output.seek(0)
 
+            # 4. 수정본 다운로드 버튼
             st.download_button(
                 label="📥 정돈된 송장 엑셀 파일 다운로드",
                 data=output,
