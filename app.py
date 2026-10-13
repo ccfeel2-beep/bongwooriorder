@@ -79,133 +79,26 @@ def load_product_dict(url):
         st.error(f"구글 시트를 불러오는 데 실패했습니다: {e}")
         return {}
 
-# --- 메인 화면 탭 구성 ---
+# --- 메인 화면 탭 구성 (요청하신 순서로 재배치) ---
 st.title("🍎 봉우리 스마트 발주 통합 시스템 (Web Ver.)")
 
-# 기존 4개 탭에서 5개 탭으로 확장
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📦 대량 취합 실행", 
     "⚙️ 거래처 양식 관리", 
+    "🚚 송장 정돈 및 검수",
+    "🔢 수량별 행 분리",
     "🛠️ 최종 출력 양식 관리", 
-    "🔗 구글 시트 연동",
-    "🚚 송장 정돈 및 검수"
+    "🔗 구글 시트 연동"
 ])
 
 # ==========================================
-# 탭 3: 최종 출력 양식 관리
-# ==========================================
-with tab3:
-    st.header("🛠️ 최종 출력 양식 관리 (도착지 열 설정)")
-    st.write("최종적으로 만들어질 엑셀 파일에서 각 데이터가 어느 열(A, B, C...)에 들어갈지 설정합니다.")
-    
-    out_cols = st.columns(3)
-    new_output = {}
-    
-    for i, (field, current_col) in enumerate(st.session_state.settings["output_mapping"].items()):
-        with out_cols[i % 3]:
-            new_output[field] = st.text_input(f"{field} (최종 열)", value=current_col, key=f"out_{field}").upper()
-            
-    st.write("---")
-    st.subheader("📌 텍스트 고정값 설정")
-    new_sender_address = st.text_input("보내는 주소에 들어갈 문구", value=st.session_state.settings["fixed_values"]["sender_address"])
-            
-    if st.button("💾 최종 양식 저장"):
-        st.session_state.settings["output_mapping"] = new_output
-        st.session_state.settings["fixed_values"]["sender_address"] = new_sender_address
-        save_settings(st.session_state.settings)
-        st.success("최종 출력 양식 및 고정값이 업데이트되었습니다!")
-
-# ==========================================
-# 탭 4: 구글 시트 연동 설정
-# ==========================================
-with tab4:
-    st.header("🔗 상품명 변환용 구글 시트 연결")
-    st.info("구글 시트에서 [파일] -> [공유] -> [웹에 게시]를 누르고 'CSV' 형식으로 게시한 링크를 아래에 붙여넣어 주세요.")
-    
-    gs_url = st.text_input("구글 시트 CSV 링크", value=st.session_state.settings.get("google_sheet_url", ""))
-    if st.button("💾 링크 저장 및 테스트"):
-        st.session_state.settings["google_sheet_url"] = gs_url
-        save_settings(st.session_state.settings)
-        dict_test = load_product_dict(gs_url)
-        if dict_test:
-            st.success(f"연결 성공! 총 {len(dict_test)}개의 상품명 변환 규칙을 불러왔습니다.")
-            with st.expander("등록된 상품명 미리보기"):
-                st.dataframe(pd.DataFrame(list(dict_test.items()), columns=["원본 상품명", "변환될 상품명"]))
-
-# ==========================================
-# 탭 2: 거래처 양식 관리
-# ==========================================
-with tab2:
-    st.header("⚙ 거래처(입력) 양식 관리")
-    col_list, col_edit = st.columns([1, 2])
-    
-    comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
-    
-    with col_list:
-        st.subheader("등록된 업체 목록")
-        selected_comp = st.selectbox("수정할 업체 선택 (새로 추가하려면 '신규 추가' 선택)", ["-- 신규 추가 --"] + comp_list)
-        if selected_comp != "-- 신규 추가 --" and st.button("🗑️ 업체 삭제"):
-            del st.session_state.settings["input_mappings"][selected_comp]
-            save_settings(st.session_state.settings)
-            st.rerun()
-            
-        st.write("---")
-        st.subheader("📥 설정 파일 백업")
-        current_settings_json = json.dumps(st.session_state.settings, ensure_ascii=False, indent=4)
-        st.download_button(
-            label="💾 현재 설정 파일(json) 다운로드",
-            data=current_settings_json,
-            file_name="web_settings.json",
-            mime="application/json"
-        )
-
-    with col_edit:
-        st.subheader("양식 상세 설정")
-        
-        default_comp_name = "" if selected_comp == "-- 신규 추가 --" else selected_comp
-        default_start_row = 2
-        if selected_comp != "-- 신규 추가 --":
-            default_start_row = st.session_state.settings["input_mappings"].get(selected_comp, {}).get("시작행", 2)
-
-        comp_name = st.text_input("업체명", value=default_comp_name, key=f"comp_name_{selected_comp}")
-        start_row = st.number_input("데이터 시작 행 (숫자)", min_value=1, value=int(default_start_row), key=f"start_row_{selected_comp}")
-        
-        st.write("엑셀에서 데이터가 있는 열(A, B, C...) 알파벳을 입력하세요.")
-        
-        exclude_fields = ["취합업체", "번호", "보내는 주소", "업체명2"]
-        fields = [f for f in st.session_state.settings["output_mapping"].keys() if f not in exclude_fields]
-        entries = {}
-        
-        edit_cols = st.columns(2)
-        for i, f in enumerate(fields):
-            curr_val = ""
-            if selected_comp != "-- 신규 추가 --":
-                comp_data = st.session_state.settings["input_mappings"].get(selected_comp, {})
-                c_num = comp_data.get("cols", {}).get(f)
-                curr_val = num_to_col(c_num) if c_num is not None else ""
-            
-            with edit_cols[i % 2]:
-                entries[f] = st.text_input(f, value=curr_val, key=f"in_{f}_{selected_comp}")
-
-        if st.button("💾 업체 양식 저장"):
-            if comp_name:
-                mapped_cols = {k: col_to_num(v) for k, v in entries.items()}
-                st.session_state.settings["input_mappings"][comp_name] = {"cols": mapped_cols, "시작행": start_row}
-                save_settings(st.session_state.settings)
-                st.success(f"[{comp_name}] 양식이 저장되었습니다.")
-                st.rerun()
-            else:
-                st.warning("업체명을 입력해주세요.")
-
-# ==========================================
-# 탭 1: 대량 취합 실행 (삭제 버튼 기능 추가)
+# 탭 1: 대량 취합 실행
 # ==========================================
 with tab1:
     st.header("📦 엑셀 파일 대량 취합")
     
     uploaded_files = st.file_uploader("취합할 엑셀 파일들을 드래그해서 올려주세요", type=["xlsx", "xls"], accept_multiple_files=True)
     
-    # 삭제 세션 상태 초기화
     if 'deleted_files' not in st.session_state:
         st.session_state.deleted_files = set()
 
@@ -225,12 +118,9 @@ with tab1:
                 if f.name not in st.session_state.file_order:
                     st.session_state.file_order.append(f.name)
             st.session_state.last_uploaded_names = current_names
-            # 업로드 목록 변경 시 삭제 집합 정돈
             st.session_state.deleted_files = st.session_state.deleted_files.intersection(current_names)
             
         file_dict = {f.name: f for f in uploaded_files}
-        
-        # X 버튼으로 삭제 처리된 파일 제외
         active_file_order = [fn for fn in st.session_state.file_order if fn not in st.session_state.deleted_files and fn in file_dict]
 
         if active_file_order:
@@ -429,25 +319,87 @@ with tab1:
                 else:
                     st.warning("선택된 파일에서 유효한 데이터를 찾지 못했습니다.")
 
+# ==========================================
+# 탭 2: 거래처 양식 관리
+# ==========================================
+with tab2:
+    st.header("⚙ 거래처(입력) 양식 관리")
+    col_list, col_edit = st.columns([1, 2])
+    
+    comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
+    
+    with col_list:
+        st.subheader("등록된 업체 목록")
+        selected_comp = st.selectbox("수정할 업체 선택 (새로 추가하려면 '신규 추가' 선택)", ["-- 신규 추가 --"] + comp_list)
+        if selected_comp != "-- 신규 추가 --" and st.button("🗑️ 업체 삭제"):
+            del st.session_state.settings["input_mappings"][selected_comp]
+            save_settings(st.session_state.settings)
+            st.rerun()
+            
+        st.write("---")
+        st.subheader("📥 설정 파일 백업")
+        current_settings_json = json.dumps(st.session_state.settings, ensure_ascii=False, indent=4)
+        st.download_button(
+            label="💾 현재 설정 파일(json) 다운로드",
+            data=current_settings_json,
+            file_name="web_settings.json",
+            mime="application/json"
+        )
+
+    with col_edit:
+        st.subheader("양식 상세 설정")
+        
+        default_comp_name = "" if selected_comp == "-- 신규 추가 --" else selected_comp
+        default_start_row = 2
+        if selected_comp != "-- 신규 추가 --":
+            default_start_row = st.session_state.settings["input_mappings"].get(selected_comp, {}).get("시작행", 2)
+
+        comp_name = st.text_input("업체명", value=default_comp_name, key=f"comp_name_{selected_comp}")
+        start_row = st.number_input("데이터 시작 행 (숫자)", min_value=1, value=int(default_start_row), key=f"start_row_{selected_comp}")
+        
+        st.write("엑셀에서 데이터가 있는 열(A, B, C...) 알파벳을 입력하세요.")
+        
+        exclude_fields = ["취합업체", "번호", "보내는 주소", "업체명2"]
+        fields = [f for f in st.session_state.settings["output_mapping"].keys() if f not in exclude_fields]
+        entries = {}
+        
+        edit_cols = st.columns(2)
+        for i, f in enumerate(fields):
+            curr_val = ""
+            if selected_comp != "-- 신규 추가 --":
+                comp_data = st.session_state.settings["input_mappings"].get(selected_comp, {})
+                c_num = comp_data.get("cols", {}).get(f)
+                curr_val = num_to_col(c_num) if c_num is not None else ""
+            
+            with edit_cols[i % 2]:
+                entries[f] = st.text_input(f, value=curr_val, key=f"in_{f}_{selected_comp}")
+
+        if st.button("💾 업체 양식 저장"):
+            if comp_name:
+                mapped_cols = {k: col_to_num(v) for k, v in entries.items()}
+                st.session_state.settings["input_mappings"][comp_name] = {"cols": mapped_cols, "시작행": start_row}
+                save_settings(st.session_state.settings)
+                st.success(f"[{comp_name}] 양식이 저장되었습니다.")
+                st.rerun()
+            else:
+                st.warning("업체명을 입력해주세요.")
 
 # ==========================================
-# 탭 5: 송장 정돈 및 검수
+# 탭 3: 송장 정돈 및 검수
 # ==========================================
-with tab5:
+with tab3:
     st.header("🚚 송장 원본 정돈 및 연계비용 검수")
     st.write("송장 원본 엑셀을 업로드하면 필요한 열 추출/정렬 및 연계비용 강조 파일로 자동 변환합니다.")
 
-    uploaded_file = st.file_uploader("송장 원본 엑셀 파일 업로드", type=["xlsx", "xls"], key="tab5_invoice_file")
+    uploaded_file = st.file_uploader("송장 원본 엑셀 파일 업로드", type=["xlsx", "xls"], key="tab3_invoice_file")
 
     if uploaded_file is not None:
         try:
-            # 1. 원본 데이터 읽기 (운송장번호와 주문번호는 지수표기법 방지를 위해 문자열로, 상품코드는 숫자로 로드)
             df = pd.read_excel(uploaded_file, dtype={
                 '운송장번호': str, 
                 '주문번호': str
             })
 
-            # 추출할 10개 열 지정 및 순서 정의
             target_cols = [
                 '운송장번호', '수하인명', '수하인기본주소', '송하인명', 
                 'A', '상품명', '상품코드', '주문번호', '쇼핑몰', '연계비용'
@@ -456,14 +408,12 @@ with tab5:
             available_cols = [col for col in target_cols if col in df.columns]
             df_filtered = df[available_cols].copy()
 
-            # 2. 상품코드 숫자형 변환 및 오름차순 정렬
             if '상품코드' in df_filtered.columns:
                 df_filtered['상품코드'] = pd.to_numeric(df_filtered['상품코드'], errors='coerce')
                 df_filtered = df_filtered.sort_values(by='상품코드', ascending=True)
 
             st.success(f"총 {len(df_filtered)}건의 데이터가 성공적으로 정돈되었습니다.")
 
-            # 웹 화면 표시 (연계비용 170 초과 시 화면에서도 노란색 강조)
             def highlight_cost(row):
                 if '연계비용' in row and pd.notnull(row['연계비용']) and float(row['연계비용']) > 170:
                     return ['background-color: #FFFF99'] * len(row)
@@ -471,17 +421,14 @@ with tab5:
 
             st.dataframe(df_filtered.style.apply(highlight_cost, axis=1), use_container_width=True)
 
-            # 3. openpyxl을 활용하여 엑셀 셀 서식 적용 (상품코드는 숫자, 운송장/주문번호는 텍스트)
             output = io.BytesIO()
             wb = Workbook()
             ws = wb.active
             ws.title = "송장정리"
 
-            # 헤더 작성
             headers = list(df_filtered.columns)
             ws.append(headers)
 
-            # 데이터 적재
             for _, r in df_filtered.iterrows():
                 row_values = []
                 for col in headers:
@@ -497,7 +444,6 @@ with tab5:
                         row_values.append(str(val))
                 ws.append(row_values)
 
-            # 열별 셀 서식 지정 (운송장번호/주문번호는 텍스트, 상품코드는 숫자 형식)
             for col_idx, col_name in enumerate(headers, start=1):
                 if col_name in ['운송장번호', '주문번호']:
                     for row in range(2, ws.max_row + 1):
@@ -506,13 +452,11 @@ with tab5:
                     for row in range(2, ws.max_row + 1):
                         ws.cell(row=row, column=col_idx).number_format = '#,##0'
 
-            # 1행에 자동 필터(AutoFilter) 설정
             if ws.max_row >= 1 and ws.max_column >= 1:
                 from openpyxl.utils import get_column_letter
                 max_col_letter = get_column_letter(ws.max_column)
                 ws.auto_filter.ref = f"A1:{max_col_letter}{ws.max_row}"
 
-            # 노란색 서식 지정
             yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
             if '연계비용' in available_cols:
@@ -531,7 +475,6 @@ with tab5:
             wb.save(output)
             output.seek(0)
 
-            # 4. 수정본 다운로드 버튼
             st.download_button(
                 label="📥 정돈된 송장 엑셀 파일 다운로드",
                 data=output,
@@ -541,3 +484,141 @@ with tab5:
 
         except Exception as e:
             st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
+
+# ==========================================
+# 탭 4: 수량별 행 분리 (원본 파일명 반영)
+# ==========================================
+with tab4:
+    st.header("🔢 업체 발주서 수량별 행 분리")
+    st.write("발주서의 수량이 2 이상인 주문건을 수량 1개당 1개의 행으로 자동 분리하여 새 엑셀 파일로 생성합니다.")
+    
+    tab4_file = st.file_uploader("업체 발주서 엑셀 파일 업로드", type=["xlsx", "xls"], key="tab4_file_uploader")
+    
+    col_t4_1, col_t4_2 = st.columns(2)
+    with col_t4_1:
+        tab4_start_row = st.number_input("데이터 시작 행 (숫자)", min_value=1, value=2, key="tab4_start_row")
+    with col_t4_2:
+        tab4_qty_col_letter = st.text_input("수량 열 알파벳 (예: F)", value="F", key="tab4_qty_col_letter").upper()
+        
+    if tab4_file is not None:
+        qty_col_idx = col_to_num(tab4_qty_col_letter)
+        
+        if qty_col_idx is None:
+            st.error("올바른 수량 열 알파벳을 입력해 주세요.")
+        else:
+            if st.button("🚀 수량별 행 분리 실행", type="primary", use_container_width=True, key="tab4_run_btn"):
+                try:
+                    tab4_file.seek(0)
+                    df_raw = None
+                    try:
+                        df_raw = pd.read_excel(tab4_file, header=None, engine='openpyxl')
+                    except Exception:
+                        try:
+                            tab4_file.seek(0)
+                            df_raw = pd.read_excel(tab4_file, header=None, engine='xlrd')
+                        except Exception:
+                            tab4_file.seek(0)
+                            html_data = tab4_file.getvalue().decode('utf-8', errors='ignore')
+                            dfs = pd.read_html(html_data)
+                            df_raw = dfs[0]
+                            
+                    if df_raw is not None and not df_raw.empty:
+                        # 1. 헤더 부분 분리
+                        header_df = df_raw.iloc[:tab4_start_row - 1].copy()
+                        data_df = df_raw.iloc[tab4_start_row - 1:].copy()
+                        
+                        expanded_rows = []
+                        total_split_count = 0
+                        
+                        for _, row in data_df.iterrows():
+                            try:
+                                raw_qty = row[qty_col_idx]
+                                if pd.isna(raw_qty):
+                                    cnt = 1
+                                else:
+                                    cnt = int(float(raw_qty))
+                                    if cnt < 1:
+                                        cnt = 1
+                            except Exception:
+                                cnt = 1
+                                
+                            total_split_count += cnt
+                            
+                            for _ in range(cnt):
+                                new_row = row.copy()
+                                new_row[qty_col_idx] = 1
+                                expanded_rows.append(new_row)
+                                
+                        expanded_data_df = pd.DataFrame(expanded_rows)
+                        final_tab4_df = pd.concat([header_df, expanded_data_df], ignore_index=True)
+                        
+                        output_tab4 = BytesIO()
+                        wb_tab4 = Workbook()
+                        ws_tab4 = wb_tab4.active
+                        ws_tab4.title = "수량분리발주서"
+                        
+                        for r_idx, r in final_tab4_df.iterrows():
+                            row_vals = [None if pd.isna(val) else val for val in r.values]
+                            ws_tab4.append(row_vals)
+                            
+                        wb_tab4.save(output_tab4)
+                        excel_data_tab4 = output_tab4.getvalue()
+                        
+                        # --- 원본 파일명 추출하여 저장 파일명에 반영 ---
+                        base_filename = os.path.splitext(tab4_file.name)[0]
+                        download_filename = f"{base_filename}_수량분리.xlsx"
+                        
+                        st.success(f"✅ 수량별 행 분리가 완료되었습니다! (원본 {len(data_df)}행 ➡️ 총 {len(expanded_data_df)}행으로 분리됨)")
+                        
+                        st.download_button(
+                            label=f"💾 '{download_filename}' 다운로드",
+                            data=excel_data_tab4,
+                            file_name=download_filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary"
+                        )
+                    else:
+                        st.error("엑셀 파일에서 데이터를 읽지 못했습니다.")
+                except Exception as e:
+                    st.error(f"행 분리 처리 중 오류가 발생했습니다: {e}")
+
+# ==========================================
+# 탭 5: 최종 출력 양식 관리
+# ==========================================
+with tab5:
+    st.header("🛠️ 최종 출력 양식 관리 (도착지 열 설정)")
+    st.write("최종적으로 만들어질 엑셀 파일에서 각 데이터가 어느 열(A, B, C...)에 들어갈지 설정합니다.")
+    
+    out_cols = st.columns(3)
+    new_output = {}
+    
+    for i, (field, current_col) in enumerate(st.session_state.settings["output_mapping"].items()):
+        with out_cols[i % 3]:
+            new_output[field] = st.text_input(f"{field} (최종 열)", value=current_col, key=f"out_{field}").upper()
+            
+    st.write("---")
+    st.subheader("📌 텍스트 고정값 설정")
+    new_sender_address = st.text_input("보내는 주소에 들어갈 문구", value=st.session_state.settings["fixed_values"]["sender_address"])
+            
+    if st.button("💾 최종 양식 저장"):
+        st.session_state.settings["output_mapping"] = new_output
+        st.session_state.settings["fixed_values"]["sender_address"] = new_sender_address
+        save_settings(st.session_state.settings)
+        st.success("최종 출력 양식 및 고정값이 업데이트되었습니다!")
+
+# ==========================================
+# 탭 6: 구글 시트 연동 설정
+# ==========================================
+with tab6:
+    st.header("🔗 상품명 변환용 구글 시트 연결")
+    st.info("구글 시트에서 [파일] -> [공유] -> [웹에 게시]를 누르고 'CSV' 형식으로 게시한 링크를 아래에 붙여넣어 주세요.")
+    
+    gs_url = st.text_input("구글 시트 CSV 링크", value=st.session_state.settings.get("google_sheet_url", ""))
+    if st.button("💾 링크 저장 및 테스트"):
+        st.session_state.settings["google_sheet_url"] = gs_url
+        save_settings(st.session_state.settings)
+        dict_test = load_product_dict(gs_url)
+        if dict_test:
+            st.success(f"연결 성공! 총 {len(dict_test)}개의 상품명 변환 규칙을 불러왔습니다.")
+            with st.expander("등록된 상품명 미리보기"):
+                st.dataframe(pd.DataFrame(list(dict_test.items()), columns=["원본 상품명", "변환될 상품명"]))
