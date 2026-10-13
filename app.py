@@ -12,7 +12,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 st.set_page_config(page_title="봉우리 스마트 발주 통합 시스템", layout="wide")
 
-# --- 1. 설정 데이터 로드 및 초기화 (호환성 유지) ---
+# --- 1. 설정 데이터 로드 및 초기화 ---
 DB_FILE = "web_settings.json"
 
 def load_settings():
@@ -197,43 +197,35 @@ with tab2:
                 st.warning("업체명을 입력해주세요.")
 
 # ==========================================
-# 탭 1: 대량 취합 실행 (중복 제거 및 개별 삭제 기능 추가)
+# 탭 1: 대량 취합 실행 (중복 관리 로직 강화)
 # ==========================================
 with tab1:
     st.header("📦 엑셀 파일 대량 취합")
     
     uploaded_files = st.file_uploader("취합할 엑셀 파일들을 드래그해서 올려주세요", type=["xlsx", "xls"], accept_multiple_files=True)
     
-    # 세션 상태 초기화
+    # 세션 변수 초기화
     if 'deleted_files' not in st.session_state:
         st.session_state.deleted_files = set()
     if 'file_order' not in st.session_state:
         st.session_state.file_order = []
-    if 'last_uploaded_names' not in st.session_state:
-        st.session_state.last_uploaded_names = set()
 
     if uploaded_files:
-        # 1. 파일명 중복 제거 (동일한 파일명이 들어오면 나중에 들어온 파일로 덮어씌움)
+        # 파일명 중복 제거: 최신 업로드 파일 객체로 매핑
         file_dict = {}
         for f in uploaded_files:
             file_dict[f.name] = f
             
-        current_names = set(file_dict.keys())
+        current_names = list(file_dict.keys())
         
-        # 파일 업로드 상태가 새로 갱신된 경우 (사용자가 새 파일을 추가하거나 취소했을 때)
-        if current_names != st.session_state.last_uploaded_names:
-            # 삭제 목록에서 제외되었던 신규 파일 추가 대응
-            st.session_state.deleted_files = st.session_state.deleted_files.intersection(current_names)
-            st.session_state.last_uploaded_names = current_names
-            
-            # 파일 순서 목록 재정비
-            st.session_state.file_order = [fname for fname in st.session_state.file_order if fname in current_names]
-            for fname in current_names:
-                if fname not in st.session_state.file_order:
-                    st.session_state.file_order.append(fname)
+        # 순서 목록 갱신 (신규 추가 파일 보존, 지워진 파일 제거)
+        st.session_state.file_order = [fn for fn in st.session_state.file_order if fn in file_dict]
+        for fn in current_names:
+            if fn not in st.session_state.file_order:
+                st.session_state.file_order.append(fn)
 
-        # 삭제 버튼을 누른 파일들 제외 처리
-        active_file_order = [fname for fname in st.session_state.file_order if fname not in st.session_state.deleted_files and fname in file_dict]
+        # 사용자가 X 버튼으로 삭제 처리한 파일 제외
+        active_file_order = [fn for fn in st.session_state.file_order if fn not in st.session_state.deleted_files and fn in file_dict]
 
         if active_file_order:
             st.write("---")
