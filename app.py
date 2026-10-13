@@ -6,9 +6,10 @@ import string
 import re
 from io import BytesIO
 import io
-from openpyxl import Workbook
+import openpyxl
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
-from openpyxl.utils.dataframe import dataframe_to_rows
+from copy import copy
 
 st.set_page_config(page_title="봉우리 스마트 발주 통합 시스템", layout="wide")
 
@@ -79,7 +80,7 @@ def load_product_dict(url):
         st.error(f"구글 시트를 불러오는 데 실패했습니다: {e}")
         return {}
 
-# --- 메인 화면 탭 구성 (요청하신 순서로 재배치) ---
+# --- 메인 화면 탭 구성 ---
 st.title("🍎 봉우리 스마트 발주 통합 시스템 (Web Ver.)")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -486,11 +487,11 @@ with tab3:
             st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# 탭 4: 수량별 행 분리 (원본 파일명 반영)
+# 탭 4: 수량별 행 분리 (원래 셀 색상 및 모든 서식 완전 보존)
 # ==========================================
 with tab4:
     st.header("🔢 업체 발주서 수량별 행 분리")
-    st.write("발주서의 수량이 2 이상인 주문건을 수량 1개당 1개의 행으로 자동 분리하여 새 엑셀 파일로 생성합니다.")
+    st.write("발주서의 수량이 2 이상인 주문건을 원본 서식(셀 색상, 폰트, 테두리 등) 그대로 수량 1개당 1개 행으로 자동 분리합니다.")
     
     tab4_file = st.file_uploader("업체 발주서 엑셀 파일 업로드", type=["xlsx", "xls"], key="tab4_file_uploader")
     
@@ -501,86 +502,106 @@ with tab4:
         tab4_qty_col_letter = st.text_input("수량 열 알파벳 (예: F)", value="F", key="tab4_qty_col_letter").upper()
         
     if tab4_file is not None:
-        qty_col_idx = col_to_num(tab4_qty_col_letter)
+        qty_col_idx_0 = col_to_num(tab4_qty_col_letter)
         
-        if qty_col_idx is None:
+        if qty_col_idx_0 is None:
             st.error("올바른 수량 열 알파벳을 입력해 주세요.")
         else:
             if st.button("🚀 수량별 행 분리 실행", type="primary", use_container_width=True, key="tab4_run_btn"):
                 try:
                     tab4_file.seek(0)
-                    df_raw = None
-                    try:
-                        df_raw = pd.read_excel(tab4_file, header=None, engine='openpyxl')
-                    except Exception:
+                    # openpyxl로 원본 워크북 및 시트 완벽 로드
+                    src_wb = openpyxl.load_workbook(tab4_file, data_only=False)
+                    src_ws = src_wb.active
+                    
+                    # 새로운 워크북 생성
+                    new_wb = Workbook()
+                    new_ws = new_wb.active
+                    new_ws.title = src_ws.title
+                    
+                    # 1. 열 너비 복사
+                    for col_letter, col_def in src_ws.column_dimensions.items():
+                        new_ws.column_dimensions[col_letter].width = col_def.width
+
+                    # 셀 서식 복사 전용 헬퍼 함수
+                    def copy_cell_style(src_cell, target_cell):
+                        target_cell.value = src_cell.value
+                        if src_cell.has_style:
+                            target_cell.font = copy(src_cell.font)
+                            target_cell.border = copy(src_cell.border)
+                            target_cell.fill = copy(src_cell.fill)
+                            target_cell.number_format = copy(src_cell.number_format)
+                            target_cell.protection = copy(src_cell.protection)
+                            target_cell.alignment = copy(src_cell.alignment)
+
+                    # 2. 헤더 행(데이터 시작 행 이전) 그대로 복사
+                    for r in range(1, tab4_start_row):
+                        new_ws.row_dimensions[r].height = src_ws.row_dimensions[r].height
+                        for c in range(1, src_ws.max_column + 1):
+                            s_cell = src_ws.cell(row=r, column=c)
+                            t_cell = new_ws.cell(row=r, column=c)
+                            copy_cell_style(s_cell, t_cell)
+
+                    # 3. 데이터 행 복사 및 수량별 행 분리
+                    new_row_idx = tab4_start_row
+                    qty_col_1based = qty_col_idx_0 + 1  # openpyxl은 1부터 시작하는 인덱스 사용
+                    
+                    original_data_count = 0
+                    expanded_data_count = 0
+
+                    for r in range(tab4_start_row, src_ws.max_row + 1):
+                        # 빈 행 체크 (수량이 없거나 전체 셀이 비어있으면 스킵)
+                        row_cells = [src_ws.cell(row=r, column=c) for c in range(1, src_ws.max_column + 1)]
+                        if all(cell.value is None for cell in row_cells):
+                            continue
+                            
+                        original_data_count += 1
+                        
+                        # 수량값 읽기
+                        qty_cell = src_ws.cell(row=r, column=qty_col_1based)
                         try:
-                            tab4_file.seek(0)
-                            df_raw = pd.read_excel(tab4_file, header=None, engine='xlrd')
-                        except Exception:
-                            tab4_file.seek(0)
-                            html_data = tab4_file.getvalue().decode('utf-8', errors='ignore')
-                            dfs = pd.read_html(html_data)
-                            df_raw = dfs[0]
-                            
-                    if df_raw is not None and not df_raw.empty:
-                        # 1. 헤더 부분 분리
-                        header_df = df_raw.iloc[:tab4_start_row - 1].copy()
-                        data_df = df_raw.iloc[tab4_start_row - 1:].copy()
-                        
-                        expanded_rows = []
-                        total_split_count = 0
-                        
-                        for _, row in data_df.iterrows():
-                            try:
-                                raw_qty = row[qty_col_idx]
-                                if pd.isna(raw_qty):
-                                    cnt = 1
-                                else:
-                                    cnt = int(float(raw_qty))
-                                    if cnt < 1:
-                                        cnt = 1
-                            except Exception:
+                            if qty_cell.value is None:
                                 cnt = 1
+                            else:
+                                cnt = int(float(qty_cell.value))
+                                if cnt < 1: cnt = 1
+                        except Exception:
+                            cnt = 1
+
+                        expanded_data_count += cnt
+                        
+                        # 수량(cnt)만큼 행을 늘려 서식과 함께 복사
+                        for _ in range(cnt):
+                            new_ws.row_dimensions[new_row_idx].height = src_ws.row_dimensions[r].height
+                            for c in range(1, src_ws.max_column + 1):
+                                s_cell = src_ws.cell(row=r, column=c)
+                                t_cell = new_ws.cell(row=new_row_idx, column=c)
+                                copy_cell_style(s_cell, t_cell)
                                 
-                            total_split_count += cnt
-                            
-                            for _ in range(cnt):
-                                new_row = row.copy()
-                                new_row[qty_col_idx] = 1
-                                expanded_rows.append(new_row)
-                                
-                        expanded_data_df = pd.DataFrame(expanded_rows)
-                        final_tab4_df = pd.concat([header_df, expanded_data_df], ignore_index=True)
-                        
-                        output_tab4 = BytesIO()
-                        wb_tab4 = Workbook()
-                        ws_tab4 = wb_tab4.active
-                        ws_tab4.title = "수량분리발주서"
-                        
-                        for r_idx, r in final_tab4_df.iterrows():
-                            row_vals = [None if pd.isna(val) else val for val in r.values]
-                            ws_tab4.append(row_vals)
-                            
-                        wb_tab4.save(output_tab4)
-                        excel_data_tab4 = output_tab4.getvalue()
-                        
-                        # --- 원본 파일명 추출하여 저장 파일명에 반영 ---
-                        base_filename = os.path.splitext(tab4_file.name)[0]
-                        download_filename = f"{base_filename}_수량분리.xlsx"
-                        
-                        st.success(f"✅ 수량별 행 분리가 완료되었습니다! (원본 {len(data_df)}행 ➡️ 총 {len(expanded_data_df)}행으로 분리됨)")
-                        
-                        st.download_button(
-                            label=f"💾 '{download_filename}' 다운로드",
-                            data=excel_data_tab4,
-                            file_name=download_filename,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary"
-                        )
-                    else:
-                        st.error("엑셀 파일에서 데이터를 읽지 못했습니다.")
+                                # 수량 열일 경우 값을 1로 고정
+                                if c == qty_col_1based:
+                                    t_cell.value = 1
+                                    
+                            new_row_idx += 1
+
+                    output_tab4 = BytesIO()
+                    new_wb.save(output_tab4)
+                    excel_data_tab4 = output_tab4.getvalue()
+                    
+                    base_filename = os.path.splitext(tab4_file.name)[0]
+                    download_filename = f"{base_filename}_수량분리.xlsx"
+                    
+                    st.success(f"✅ 서식 보존 수량별 행 분리가 완료되었습니다! (원본 {original_data_count}행 ➡️ 총 {expanded_data_count}행으로 분리됨)")
+                    
+                    st.download_button(
+                        label=f"💾 '{download_filename}' 다운로드",
+                        data=excel_data_tab4,
+                        file_name=download_filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary"
+                    )
                 except Exception as e:
-                    st.error(f"행 분리 처리 중 오류가 발생했습니다: {e}")
+                    st.error(f"서식 보존 행 분리 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
 # 탭 5: 최종 출력 양식 관리
