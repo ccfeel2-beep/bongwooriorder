@@ -210,20 +210,6 @@ with tab1:
     if 'file_order' not in st.session_state:
         st.session_state.file_order = []
 
-    if uploaded_files:
-        # 파일명 중복 제거: 최신 업로드 파일 객체로 매핑
-        file_dict = {}
-        for f in uploaded_files:
-            file_dict[f.name] = f
-            
-        current_names = list(file_dict.keys())
-        
-        # 순서 목록 갱신 (신규 추가 파일 보존, 지워진 파일 제거)
-        st.session_state.file_order = [fn for fn in st.session_state.file_order if fn in file_dict]
-        for fn in current_names:
-            if fn not in st.session_state.file_order:
-                st.session_state.file_order.append(fn)
-
         # 사용자가 X 버튼으로 삭제 처리한 파일 제외
         active_file_order = [fn for fn in st.session_state.file_order if fn not in st.session_state.deleted_files and fn in file_dict]
 
