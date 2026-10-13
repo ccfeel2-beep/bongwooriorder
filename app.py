@@ -82,7 +82,6 @@ def load_product_dict(url):
 # --- 메인 화면 탭 구성 ---
 st.title("🍎 봉우리 스마트 발주 통합 시스템 (Web Ver.)")
 
-# 기존 4개 탭에서 5개 탭으로 확장
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📦 대량 취합 실행", 
     "⚙️ 거래처 양식 관리", 
@@ -198,216 +197,241 @@ with tab2:
                 st.warning("업체명을 입력해주세요.")
 
 # ==========================================
-# 탭 1: 대량 취합 실행
+# 탭 1: 대량 취합 실행 (중복 제거 및 개별 삭제 기능 추가)
 # ==========================================
 with tab1:
     st.header("📦 엑셀 파일 대량 취합")
     
     uploaded_files = st.file_uploader("취합할 엑셀 파일들을 드래그해서 올려주세요", type=["xlsx", "xls"], accept_multiple_files=True)
     
-    if uploaded_files:
-        st.write("---")
-        comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
-        
-        if 'file_order' not in st.session_state:
-            st.session_state.file_order = []
-        if 'last_uploaded_names' not in st.session_state:
-            st.session_state.last_uploaded_names = set()
+    # 세션 상태 초기화
+    if 'deleted_files' not in st.session_state:
+        st.session_state.deleted_files = set()
+    if 'file_order' not in st.session_state:
+        st.session_state.file_order = []
+    if 'last_uploaded_names' not in st.session_state:
+        st.session_state.last_uploaded_names = set()
 
-        current_names = {f.name for f in uploaded_files}
+    if uploaded_files:
+        # 1. 파일명 중복 제거 (동일한 파일명이 들어오면 나중에 들어온 파일로 덮어씌움)
+        file_dict = {}
+        for f in uploaded_files:
+            file_dict[f.name] = f
+            
+        current_names = set(file_dict.keys())
+        
+        # 파일 업로드 상태가 새로 갱신된 경우 (사용자가 새 파일을 추가하거나 취소했을 때)
         if current_names != st.session_state.last_uploaded_names:
-            st.session_state.file_order = [f for f in st.session_state.file_order if f in current_names]
-            for f in uploaded_files:
-                if f.name not in st.session_state.file_order:
-                    st.session_state.file_order.append(f.name)
+            # 삭제 목록에서 제외되었던 신규 파일 추가 대응
+            st.session_state.deleted_files = st.session_state.deleted_files.intersection(current_names)
             st.session_state.last_uploaded_names = current_names
             
-        file_dict = {f.name: f for f in uploaded_files}
-        file_company_map = {}
-        
-        st.write("💡 **위아래 화살표(🔼/🔽)를 눌러 최종 엑셀에서 합쳐질 파일의 순서를 변경할 수 있습니다.**")
-        
-        for i, fname in enumerate(st.session_state.file_order):
-            col_btn, col_name, col_sel = st.columns([1, 4, 3])
+            # 파일 순서 목록 재정비
+            st.session_state.file_order = [fname for fname in st.session_state.file_order if fname in current_names]
+            for fname in current_names:
+                if fname not in st.session_state.file_order:
+                    st.session_state.file_order.append(fname)
+
+        # 삭제 버튼을 누른 파일들 제외 처리
+        active_file_order = [fname for fname in st.session_state.file_order if fname not in st.session_state.deleted_files and fname in file_dict]
+
+        if active_file_order:
+            st.write("---")
+            comp_list = sorted(list(st.session_state.settings["input_mappings"].keys()))
+            file_company_map = {}
             
-            with col_btn:
-                b1, b2 = st.columns(2)
-                with b1:
-                    if st.button("🔼", key=f"up_{fname}") and i > 0:
-                        st.session_state.file_order[i], st.session_state.file_order[i-1] = st.session_state.file_order[i-1], st.session_state.file_order[i]
+            st.write("💡 **위아래 화살표(🔼/🔽)로 순서를 변경하고, 맨 우측 [❌] 버튼으로 해당 파일을 목록에서 제외할 수 있습니다.**")
+            
+            for i, fname in enumerate(active_file_order):
+                col_btn, col_name, col_sel, col_del = st.columns([1, 4, 3, 1])
+                
+                with col_btn:
+                    b1, b2 = st.columns(2)
+                    with b1:
+                        if st.button("🔼", key=f"up_{fname}") and i > 0:
+                            prev_fname = active_file_order[i-1]
+                            idx1 = st.session_state.file_order.index(fname)
+                            idx2 = st.session_state.file_order.index(prev_fname)
+                            st.session_state.file_order[idx1], st.session_state.file_order[idx2] = st.session_state.file_order[idx2], st.session_state.file_order[idx1]
+                            st.rerun()
+                    with b2:
+                        if st.button("🔽", key=f"down_{fname}") and i < len(active_file_order) - 1:
+                            next_fname = active_file_order[i+1]
+                            idx1 = st.session_state.file_order.index(fname)
+                            idx2 = st.session_state.file_order.index(next_fname)
+                            st.session_state.file_order[idx1], st.session_state.file_order[idx2] = st.session_state.file_order[idx2], st.session_state.file_order[idx1]
+                            st.rerun()
+                with col_name:
+                    st.write(f"📄 {fname}")
+                with col_sel:
+                    file_company_map[fname] = st.selectbox(f"{fname} 업체 선택", ["-- 선택 --"] + comp_list, key=f"sel_{fname}", label_visibility="collapsed")
+                with col_del:
+                    if st.button("❌", key=f"del_{fname}", help="이 파일을 리스트에서 삭제"):
+                        st.session_state.deleted_files.add(fname)
                         st.rerun()
-                with b2:
-                    if st.button("🔽", key=f"down_{fname}") and i < len(st.session_state.file_order) - 1:
-                        st.session_state.file_order[i], st.session_state.file_order[i+1] = st.session_state.file_order[i+1], st.session_state.file_order[i]
-                        st.rerun()
-            with col_name:
-                st.write(f"📄 {fname}")
-            with col_sel:
-                file_company_map[fname] = st.selectbox(f"{fname} 업체 선택", ["-- 선택 --"] + comp_list, key=f"sel_{fname}", label_visibility="collapsed")
-        
-        st.write("")
-        if st.button("🚀 취합 시작", type="primary", use_container_width=True):
-            all_rows = []
-            missing_products = set()
             
-            prod_dict = load_product_dict(st.session_state.settings.get("google_sheet_url", ""))
-            
-            with st.spinner('파일을 병합하고 상품명을 변환하는 중...'):
-                for fname in st.session_state.file_order:
-                    file = file_dict[fname]
-                    comp = file_company_map[fname]
-                    if comp == "-- 선택 --": continue
-                    
-                    m = st.session_state.settings["input_mappings"][comp]
-                    
-                    df = None
-                    file.seek(0)
-                    try:
-                        df = pd.read_excel(file, header=None, engine='openpyxl')
-                    except Exception:
+            st.write("")
+            if st.button("🚀 취합 시작", type="primary", use_container_width=True):
+                all_rows = []
+                missing_products = set()
+                
+                prod_dict = load_product_dict(st.session_state.settings.get("google_sheet_url", ""))
+                
+                with st.spinner('파일을 병합하고 상품명을 변환하는 중...'):
+                    for fname in active_file_order:
+                        file = file_dict[fname]
+                        comp = file_company_map.get(fname, "-- 선택 --")
+                        if comp == "-- 선택 --": continue
+                        
+                        m = st.session_state.settings["input_mappings"][comp]
+                        
+                        df = None
+                        file.seek(0)
                         try:
-                            file.seek(0)
-                            df = pd.read_excel(file, header=None, engine='xlrd')
-                        except ImportError:
-                            st.error("서버에 xlrd 부품이 없습니다. Streamlit 앱을 지웠다가 다시 만들어주세요!")
-                            st.stop()
+                            df = pd.read_excel(file, header=None, engine='openpyxl')
                         except Exception:
                             try:
                                 file.seek(0)
-                                html_data = file.getvalue().decode('utf-8', errors='ignore')
-                                dfs = pd.read_html(html_data)
-                                df = dfs[0]
+                                df = pd.read_excel(file, header=None, engine='xlrd')
+                            except ImportError:
+                                st.error("서버에 xlrd 부품이 없습니다. Streamlit 앱을 지웠다가 다시 만들어주세요!")
+                                st.stop()
                             except Exception:
-                                st.error(f"⚠️ '{fname}' 파일을 읽을 수 없습니다. 엑셀 파일이 손상되었거나 알 수 없는 형식입니다.")
-                                continue
-                    
-                    if df is None or df.empty:
-                        continue
+                                try:
+                                    file.seek(0)
+                                    html_data = file.getvalue().decode('utf-8', errors='ignore')
+                                    dfs = pd.read_html(html_data)
+                                    df = dfs[0]
+                                except Exception:
+                                    st.error(f"⚠️ '{fname}' 파일을 읽을 수 없습니다. 엑셀 파일이 손상되었거나 알 수 없는 형식입니다.")
+                                    continue
                         
-                    data_df = df.iloc[m['시작행'] - 1:]
-                    
-                    for _, row in data_df.iterrows():
-                        name_col = m['cols'].get('수취인명')
-                        if name_col is None or name_col not in row.index or pd.isna(row[name_col]) or str(row[name_col]).strip() == "": 
+                        if df is None or df.empty:
                             continue
+                            
+                        data_df = df.iloc[m['시작행'] - 1:]
                         
-                        row_data = {}
-                        for field in st.session_state.settings["output_mapping"].keys():
-                            if field in ["취합업체", "번호", "보내는 주소", "업체명2"]:
+                        for _, row in data_df.iterrows():
+                            name_col = m['cols'].get('수취인명')
+                            if name_col is None or name_col not in row.index or pd.isna(row[name_col]) or str(row[name_col]).strip() == "": 
                                 continue
-                                
-                            c = m['cols'].get(field)
-                            if c is not None and c in row.index:
-                                v = row[c]
-                                row_data[field] = "" if pd.isna(v) else str(v).strip()
-                            else:
-                                row_data[field] = ""
-                                
-                        row_data["취합업체"] = comp
-                        
-                        original_prod = row_data.get("상품명", "")
-                        if original_prod:
-                            if original_prod in prod_dict:
-                                row_data["상품명"] = prod_dict[original_prod]
-                            else:
-                                missing_products.add(original_prod)
-                                row_data["상품명"] = original_prod
-                                row_data["_is_missing"] = True
-                        
-                        try:
-                            q_idx = m['cols'].get('수량')
-                            if q_idx is not None and q_idx in row.index:
-                                cnt = int(float(row[q_idx]))
-                            else:
-                                cnt = 1
-                        except: cnt = 1
-                        
-                        row_data["수량"] = 1
-                        for _ in range(cnt):
-                            all_rows.append(row_data.copy())
                             
-            if all_rows:
-                out_map = st.session_state.settings["output_mapping"]
-                
-                max_col_num = max([col_to_num(v) for v in out_map.values() if v])
-                final_cols = [num_to_col(i) for i in range(max_col_num + 1)]
-                final_df = pd.DataFrame(columns=final_cols)
-                
-                sender_address_text = st.session_state.settings.get("fixed_values", {}).get("sender_address", "")
-                
-                for idx, row_data in enumerate(all_rows):
-                    excel_row_num = idx + 2
-                    for field, target_col in out_map.items():
-                        if target_col:
-                            clean_col = re.sub(r'[^A-Za-z]', '', target_col).upper()
-                            if clean_col:
-                                if field == "번호":
-                                    val = idx + 1
-                                elif field == "보내는 주소":
-                                    val = sender_address_text
-                                elif field == "업체명2":
-                                    val = f"=M{excel_row_num}"
-                                else:
-                                    val = row_data.get(field, "")
+                            row_data = {}
+                            for field in st.session_state.settings["output_mapping"].keys():
+                                if field in ["취합업체", "번호", "보내는 주소", "업체명2"]:
+                                    continue
                                     
-                                final_df.loc[idx, clean_col] = val
-
-                new_headers = []
-                for col_letter in final_df.columns:
-                    mapped_field = None
-                    for field, target_col in out_map.items():
-                        if target_col and re.sub(r'[^A-Za-z]', '', target_col).upper() == col_letter:
-                            mapped_field = field
-                            break
+                                c = m['cols'].get(field)
+                                if c is not None and c in row.index:
+                                    v = row[c]
+                                    row_data[field] = "" if pd.isna(v) else str(v).strip()
+                                else:
+                                    row_data[field] = ""
+                                    
+                            row_data["취합업체"] = comp
                             
-                    if mapped_field:
-                        new_headers.append(mapped_field)
-                    else:
-                        new_headers.append(col_letter)
-                        
-                final_df.columns = new_headers
-                
-                output = BytesIO()
-                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                    final_df.to_excel(writer, index=False)
+                            original_prod = row_data.get("상품명", "")
+                            if original_prod:
+                                if original_prod in prod_dict:
+                                    row_data["상품명"] = prod_dict[original_prod]
+                                else:
+                                    missing_products.add(original_prod)
+                                    row_data["상품명"] = original_prod
+                                    row_data["_is_missing"] = True
+                            
+                            try:
+                                q_idx = m['cols'].get('수량')
+                                if q_idx is not None and q_idx in row.index:
+                                    cnt = int(float(row[q_idx]))
+                                else:
+                                    cnt = 1
+                            except: cnt = 1
+                            
+                            row_data["수량"] = 1
+                            for _ in range(cnt):
+                                all_rows.append(row_data.copy())
+                                
+                if all_rows:
+                    out_map = st.session_state.settings["output_mapping"]
                     
-                    workbook = writer.book
-                    worksheet = writer.sheets['Sheet1']
-                    orange_format = workbook.add_format({'bg_color': '#F4B084'})
+                    max_col_num = max([col_to_num(v) for v in out_map.values() if v])
+                    final_cols = [num_to_col(i) for i in range(max_col_num + 1)]
+                    final_df = pd.DataFrame(columns=final_cols)
                     
-                    max_row = len(final_df)
-                    max_col = len(final_df.columns) - 1
-                    worksheet.autofilter(0, 0, max_row, max_col)
+                    sender_address_text = st.session_state.settings.get("fixed_values", {}).get("sender_address", "")
                     
-                    prod_col_letter = out_map.get("상품명", "")
-                    clean_prod_col = re.sub(r'[^A-Za-z]', '', prod_col_letter).upper()
-                    prod_col_idx = col_to_num(clean_prod_col) if clean_prod_col else None
-                    
-                    if prod_col_idx is not None:
-                        for idx, r_data in enumerate(all_rows):
-                            if r_data.get("_is_missing"):
-                                worksheet.write(idx + 1, prod_col_idx, r_data.get("상품명", ""), orange_format)
-                
-                excel_data = output.getvalue()
-                
-                st.success(f"✅ 총 {len(all_rows)}건의 데이터 취합이 완료되었습니다!")
-                
-                if missing_products:
-                    st.error("⚠️ 아래 상품명들은 구글 시트에 등록되지 않아 변환되지 않았습니다. 시트에 추가해주세요.")
-                    st.code("\n".join(missing_products))
-                else:
-                    st.info("✨ 모든 상품명이 완벽하게 변환되었습니다.")
-                
-                st.download_button(
-                    label="💾 통합 엑셀 파일 다운로드",
-                    data=excel_data,
-                    file_name="발주취합완료.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
-            else:
-                st.warning("선택된 파일에서 유효한 데이터를 찾지 못했습니다.")
+                    for idx, row_data in enumerate(all_rows):
+                        excel_row_num = idx + 2
+                        for field, target_col in out_map.items():
+                            if target_col:
+                                clean_col = re.sub(r'[^A-Za-z]', '', target_col).upper()
+                                if clean_col:
+                                    if field == "번호":
+                                        val = idx + 1
+                                    elif field == "보내는 주소":
+                                        val = sender_address_text
+                                    elif field == "업체명2":
+                                        val = f"=M{excel_row_num}"
+                                    else:
+                                        val = row_data.get(field, "")
+                                        
+                                    final_df.loc[idx, clean_col] = val
 
+                    new_headers = []
+                    for col_letter in final_df.columns:
+                        mapped_field = None
+                        for field, target_col in out_map.items():
+                            if target_col and re.sub(r'[^A-Za-z]', '', target_col).upper() == col_letter:
+                                mapped_field = field
+                                break
+                                
+                        if mapped_field:
+                            new_headers.append(mapped_field)
+                        else:
+                            new_headers.append(col_letter)
+                            
+                    final_df.columns = new_headers
+                    
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        final_df.to_excel(writer, index=False)
+                        
+                        workbook = writer.book
+                        worksheet = writer.sheets['Sheet1']
+                        orange_format = workbook.add_format({'bg_color': '#F4B084'})
+                        
+                        max_row = len(final_df)
+                        max_col = len(final_df.columns) - 1
+                        worksheet.autofilter(0, 0, max_row, max_col)
+                        
+                        prod_col_letter = out_map.get("상품명", "")
+                        clean_prod_col = re.sub(r'[^A-Za-z]', '', prod_col_letter).upper()
+                        prod_col_idx = col_to_num(clean_prod_col) if clean_prod_col else None
+                        
+                        if prod_col_idx is not None:
+                            for idx, r_data in enumerate(all_rows):
+                                if r_data.get("_is_missing"):
+                                    worksheet.write(idx + 1, prod_col_idx, r_data.get("상품명", ""), orange_format)
+                    
+                    excel_data = output.getvalue()
+                    
+                    st.success(f"✅ 총 {len(all_rows)}건의 데이터 취합이 완료되었습니다!")
+                    
+                    if missing_products:
+                        st.error("⚠️ 아래 상품명들은 구글 시트에 등록되지 않아 변환되지 않았습니다. 시트에 추가해주세요.")
+                        st.code("\n".join(missing_products))
+                    else:
+                        st.info("✨ 모든 상품명이 완벽하게 변환되었습니다.")
+                    
+                    st.download_button(
+                        label="💾 통합 엑셀 파일 다운로드",
+                        data=excel_data,
+                        file_name="발주취합완료.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary"
+                    )
+                else:
+                    st.warning("선택된 파일에서 유효한 데이터를 찾지 못했습니다.")
 
 # ==========================================
 # 탭 5: 송장 정돈 및 검수
@@ -420,13 +444,11 @@ with tab5:
 
     if uploaded_file is not None:
         try:
-            # 1. 원본 데이터 읽기 (운송장번호와 주문번호는 지수표기법 방지를 위해 문자열로, 상품코드는 숫자로 로드)
             df = pd.read_excel(uploaded_file, dtype={
                 '운송장번호': str, 
                 '주문번호': str
             })
 
-            # 추출할 10개 열 지정 및 순서 정의
             target_cols = [
                 '운송장번호', '수하인명', '수하인기본주소', '송하인명', 
                 'A', '상품명', '상품코드', '주문번호', '쇼핑몰', '연계비용'
@@ -435,14 +457,12 @@ with tab5:
             available_cols = [col for col in target_cols if col in df.columns]
             df_filtered = df[available_cols].copy()
 
-            # 2. 상품코드 숫자형 변환 및 오름차순 정렬
             if '상품코드' in df_filtered.columns:
                 df_filtered['상품코드'] = pd.to_numeric(df_filtered['상품코드'], errors='coerce')
                 df_filtered = df_filtered.sort_values(by='상품코드', ascending=True)
 
             st.success(f"총 {len(df_filtered)}건의 데이터가 성공적으로 정돈되었습니다.")
 
-            # 웹 화면 표시 (연계비용 170 초과 시 화면에서도 노란색 강조)
             def highlight_cost(row):
                 if '연계비용' in row and pd.notnull(row['연계비용']) and float(row['연계비용']) > 170:
                     return ['background-color: #FFFF99'] * len(row)
@@ -450,17 +470,14 @@ with tab5:
 
             st.dataframe(df_filtered.style.apply(highlight_cost, axis=1), use_container_width=True)
 
-            # 3. openpyxl을 활용하여 엑셀 셀 서식 적용 (상품코드는 숫자, 운송장/주문번호는 텍스트)
             output = io.BytesIO()
             wb = Workbook()
             ws = wb.active
             ws.title = "송장정리"
 
-            # 헤더 작성
             headers = list(df_filtered.columns)
             ws.append(headers)
 
-            # 데이터 적재
             for _, r in df_filtered.iterrows():
                 row_values = []
                 for col in headers:
@@ -476,7 +493,6 @@ with tab5:
                         row_values.append(str(val))
                 ws.append(row_values)
 
-            # 열별 셀 서식 지정 (운송장번호/주문번호는 텍스트, 상품코드는 숫자 형식)
             for col_idx, col_name in enumerate(headers, start=1):
                 if col_name in ['운송장번호', '주문번호']:
                     for row in range(2, ws.max_row + 1):
@@ -485,13 +501,11 @@ with tab5:
                     for row in range(2, ws.max_row + 1):
                         ws.cell(row=row, column=col_idx).number_format = '#,##0'
 
-            # 1행에 자동 필터(AutoFilter) 설정
             if ws.max_row >= 1 and ws.max_column >= 1:
                 from openpyxl.utils import get_column_letter
                 max_col_letter = get_column_letter(ws.max_column)
                 ws.auto_filter.ref = f"A1:{max_col_letter}{ws.max_row}"
 
-            # 노란색 서식 지정
             yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
             if '연계비용' in available_cols:
@@ -510,7 +524,6 @@ with tab5:
             wb.save(output)
             output.seek(0)
 
-            # 4. 수정본 다운로드 버튼
             st.download_button(
                 label="📥 정돈된 송장 엑셀 파일 다운로드",
                 data=output,
