@@ -93,7 +93,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 ])
 
 # ==========================================
-# 탭 1: 대량 취합 실행
+# 탭 1: 대량 취합 실행 (취합 실패 파일 추적 안내 추가)
 # ==========================================
 with tab1:
     st.header("📦 엑셀 파일 대량 취합")
@@ -161,6 +161,8 @@ with tab1:
             if st.button("🚀 취합 시작", type="primary", use_container_width=True):
                 all_rows = []
                 missing_products = set()
+                failed_files = []   # 실패/오류 파일 기록 리스트
+                success_files = []  # 성공 파일 기록 리스트
                 
                 prod_dict = load_product_dict(st.session_state.settings.get("google_sheet_url", ""))
                 
@@ -168,7 +170,9 @@ with tab1:
                     for fname in active_file_order:
                         file = file_dict[fname]
                         comp = file_company_map.get(fname, "-- 선택 --")
-                        if comp == "-- 선택 --": continue
+                        if comp == "-- 선택 --":
+                            failed_files.append((fname, "업체 미선택"))
+                            continue
                         
                         m = st.session_state.settings["input_mappings"][comp]
                         
@@ -190,13 +194,15 @@ with tab1:
                                     dfs = pd.read_html(html_data)
                                     df = dfs[0]
                                 except Exception:
-                                    st.error(f"⚠️ '{fname}' 파일을 읽을 수 없습니다. 엑셀 파일이 손상되었거나 알 수 없는 형식입니다.")
+                                    failed_files.append((fname, "파일 읽기 오류 (손상되거나 지원하지 않는 엑셀 포맷)"))
                                     continue
                         
                         if df is None or df.empty:
+                            failed_files.append((fname, "데이터 내용이 비어있음"))
                             continue
                             
                         data_df = df.iloc[m['시작행'] - 1:]
+                        file_valid_rows = 0
                         
                         for _, row in data_df.iterrows():
                             name_col = m['cols'].get('수취인명')
@@ -237,6 +243,12 @@ with tab1:
                             row_data["수량"] = 1
                             for _ in range(cnt):
                                 all_rows.append(row_data.copy())
+                                file_valid_rows += 1
+                                
+                        if file_valid_rows > 0:
+                            success_files.append((fname, file_valid_rows))
+                        else:
+                            failed_files.append((fname, f"유효 데이터 0건 (설정된 시작행 {m['시작행']}행 이후로 '수취인명' 열 데이터를 찾을 수 없음)"))
                                 
                 if all_rows:
                     out_map = st.session_state.settings["output_mapping"]
@@ -302,10 +314,17 @@ with tab1:
                     
                     excel_data = output.getvalue()
                     
-                    st.success(f"✅ 총 {len(all_rows)}건의 데이터 취합이 완료되었습니다!")
+                    st.success(f"✅ 총 {len(all_rows)}건의 데이터 취합이 완료되었습니다! (성공 파일 {len(success_files)}개)")
+                    
+                    # --- [신규 기능] 취합 실패 파일 안내 세션 ---
+                    if failed_files:
+                        st.error(f"⚠️ **다음 {len(failed_files)}개 파일은 취합에서 제외되었거나 실패했습니다:**")
+                        for f_name, reason in failed_files:
+                            st.write(f"• ❌ **{f_name}** ➡️ *사유: {reason}*")
+                    # ---------------------------------------------
                     
                     if missing_products:
-                        st.error("⚠️ 아래 상품명들은 구글 시트에 등록되지 않아 변환되지 않았습니다. 시트에 추가해주세요.")
+                        st.warning("⚠️ 아래 상품명들은 구글 시트에 등록되지 않아 변환되지 않았습니다. 시트에 추가해주세요.")
                         st.code("\n".join(missing_products))
                     else:
                         st.info("✨ 모든 상품명이 완벽하게 변환되었습니다.")
@@ -318,7 +337,11 @@ with tab1:
                         type="primary"
                     )
                 else:
-                    st.warning("선택된 파일에서 유효한 데이터를 찾지 못했습니다.")
+                    st.error("❌ 유효한 데이터를 추출하지 못했습니다.")
+                    if failed_files:
+                        st.subheader("실패한 파일 상세 원인")
+                        for f_name, reason in failed_files:
+                            st.write(f"• ❌ **{f_name}** ➡️ *사유: {reason}*")
 
 # ==========================================
 # 탭 2: 거래처 양식 관리
@@ -487,7 +510,7 @@ with tab3:
             st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
 # ==========================================
-# 탭 4: 수량별 행 분리 (원래 셀 색상 및 모든 서식 완전 보존)
+# 탭 4: 수량별 행 분리
 # ==========================================
 with tab4:
     st.header("🔢 업체 발주서 수량별 행 분리")
@@ -510,20 +533,16 @@ with tab4:
             if st.button("🚀 수량별 행 분리 실행", type="primary", use_container_width=True, key="tab4_run_btn"):
                 try:
                     tab4_file.seek(0)
-                    # openpyxl로 원본 워크북 및 시트 완벽 로드
                     src_wb = openpyxl.load_workbook(tab4_file, data_only=False)
                     src_ws = src_wb.active
                     
-                    # 새로운 워크북 생성
                     new_wb = Workbook()
                     new_ws = new_wb.active
                     new_ws.title = src_ws.title
                     
-                    # 1. 열 너비 복사
                     for col_letter, col_def in src_ws.column_dimensions.items():
                         new_ws.column_dimensions[col_letter].width = col_def.width
 
-                    # 셀 서식 복사 전용 헬퍼 함수
                     def copy_cell_style(src_cell, target_cell):
                         target_cell.value = src_cell.value
                         if src_cell.has_style:
@@ -534,7 +553,6 @@ with tab4:
                             target_cell.protection = copy(src_cell.protection)
                             target_cell.alignment = copy(src_cell.alignment)
 
-                    # 2. 헤더 행(데이터 시작 행 이전) 그대로 복사
                     for r in range(1, tab4_start_row):
                         new_ws.row_dimensions[r].height = src_ws.row_dimensions[r].height
                         for c in range(1, src_ws.max_column + 1):
@@ -542,22 +560,19 @@ with tab4:
                             t_cell = new_ws.cell(row=r, column=c)
                             copy_cell_style(s_cell, t_cell)
 
-                    # 3. 데이터 행 복사 및 수량별 행 분리
                     new_row_idx = tab4_start_row
-                    qty_col_1based = qty_col_idx_0 + 1  # openpyxl은 1부터 시작하는 인덱스 사용
+                    qty_col_1based = qty_col_idx_0 + 1
                     
                     original_data_count = 0
                     expanded_data_count = 0
 
                     for r in range(tab4_start_row, src_ws.max_row + 1):
-                        # 빈 행 체크 (수량이 없거나 전체 셀이 비어있으면 스킵)
                         row_cells = [src_ws.cell(row=r, column=c) for c in range(1, src_ws.max_column + 1)]
                         if all(cell.value is None for cell in row_cells):
                             continue
                             
                         original_data_count += 1
                         
-                        # 수량값 읽기
                         qty_cell = src_ws.cell(row=r, column=qty_col_1based)
                         try:
                             if qty_cell.value is None:
@@ -570,7 +585,6 @@ with tab4:
 
                         expanded_data_count += cnt
                         
-                        # 수량(cnt)만큼 행을 늘려 서식과 함께 복사
                         for _ in range(cnt):
                             new_ws.row_dimensions[new_row_idx].height = src_ws.row_dimensions[r].height
                             for c in range(1, src_ws.max_column + 1):
@@ -578,7 +592,6 @@ with tab4:
                                 t_cell = new_ws.cell(row=new_row_idx, column=c)
                                 copy_cell_style(s_cell, t_cell)
                                 
-                                # 수량 열일 경우 값을 1로 고정
                                 if c == qty_col_1based:
                                     t_cell.value = 1
                                     
