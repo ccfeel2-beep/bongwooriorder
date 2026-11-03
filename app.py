@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
 from copy import copy
 
-st.set_page_config(page_title="봉우리 스마트 발주 통합 시스템", layout="wide")
+st.set_page_config(page_title="봉우리 발주 취합 시스템", layout="wide")
 
 # --- 1. 설정 데이터 로드 및 초기화 (호환성 유지) ---
 DB_FILE = "web_settings.json"
@@ -81,7 +81,7 @@ def load_product_dict(url):
         return {}
 
 # --- 메인 화면 탭 구성 ---
-st.title("🍎 봉우리 스마트 발주 통합 시스템 (Web Ver.)")
+st.title("🍎 봉우리 발주 취합 시스템 (Web Ver.)")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📦 대량 취합 실행", 
